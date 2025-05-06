@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 50" width="200" height="50">
+  <g fill="#ffffff">
+    <path d="M10,10 h25 v30 h-25 v-30 z" />
+    <path d="M40,10 h5 v30 h-5 v-30 z" />
+    <path d="M50,10 h25 v5 h-25 v-5 z" />
+    <path d="M50,20 h20 v5 h-20 v-5 z" />
+    <path d="M50,35 h25 v5 h-25 v-5 z" />
+    <path d="M85,10 h5 v30 h-5 v-30 z" />
+    <path d="M95,10 h25 v30 h-25 v-30 z M100,15 v20 h15 v-20 h-15 z" />
+    <path d="M130,10 h25 v30 h-25 v-30 z M135,15 v20 h15 v-20 h-15 z" />
+    <path d="M160,10 h30 v5 h-25 v5 h20 v5 h-20 v10 h25 v5 h-30 v-30 z" />
+  </g>
+</svg> 

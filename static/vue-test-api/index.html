@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Тестирование API - Дом Адвокатов</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.3.4/dist/vue.global.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <style>
+        .nav-pills .nav-link.active {
+            background-color: #6c757d;
+        }
+        .api-response {
+            max-height: 400px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="app" class="container mt-4">
+        <h1 class="mb-4">Тестирование API - Дом Адвокатов</h1>
+        
+        <div class="alert alert-info" v-if="message">{{ message }}</div>
+        
+        <div class="row">
+            <div class="col-md-3">
+                <div class="nav flex-column nav-pills" role="tablist">
+                    <button class="nav-link active mb-2" @click="activeTab = 'auth'">Авторизация</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'users'">Пользователи</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'news'">Новости</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'lawyers'">Адвокаты</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'podcasts'">Подкасты</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'telegram'">Телеграм посты</button>
+                    <button class="nav-link mb-2" @click="activeTab = 'mainpage'">Главная страница</button>
+                </div>
+            </div>
+            
+            <div class="col-md-9">
+                <!-- Секция Авторизации -->
+                <div v-if="activeTab === 'auth'" class="tab-pane fade show active">
+                    <h3>Авторизация</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Регистрация</div>
+                        <div class="card-body">
+                            <form @submit.prevent="register">
+                                <div class="form-group">
+                                    <label>Email:</label>
+                                    <input type="email" class="form-control" v-model="registerData.email" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Имя пользователя:</label>
+                                    <input type="text" class="form-control" v-model="registerData.username" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Пароль:</label>
+                                    <input type="password" class="form-control" v-model="registerData.password" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Зарегистрироваться</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Вход</div>
+                        <div class="card-body">
+                            <form @submit.prevent="login">
+                                <div class="form-group">
+                                    <label>Email:</label>
+                                    <input type="email" class="form-control" v-model="loginData.email" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Пароль:</label>
+                                    <input type="password" class="form-control" v-model="loginData.password" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Войти</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Обновление токена</div>
+                        <div class="card-body">
+                            <form @submit.prevent="refreshToken">
+                                <div class="form-group">
+                                    <label>Refresh Token:</label>
+                                    <input type="text" class="form-control" v-model="refreshData.refresh" required>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Обновить токен</button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Пользователи -->
+                <div v-if="activeTab === 'users'" class="tab-pane fade show active">
+                    <h3>Пользователи</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Профиль пользователя</div>
+                        <div class="card-body">
+                            <form @submit.prevent="updateProfile">
+                                <div class="form-group">
+                                    <label>Имя:</label>
+                                    <input type="text" class="form-control" v-model="profileData.first_name">
+                                </div>
+                                <div class="form-group">
+                                    <label>Фамилия:</label>
+                                    <input type="text" class="form-control" v-model="profileData.last_name">
+                                </div>
+                                <button type="submit" class="btn btn-primary">Обновить профиль</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Настройка 2FA</div>
+                        <div class="card-body">
+                            <form @submit.prevent="update2FA">
+                                <div class="form-group">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" v-model="twoFAData.is_2fa_enabled">
+                                        <label class="form-check-label">Включить 2FA</label>
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary">Обновить настройки 2FA</button>
+                            </form>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Удаление аккаунта</div>
+                        <div class="card-body">
+                            <button @click="deleteAccount" class="btn btn-danger">Удалить аккаунт</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Новости -->
+                <div v-if="activeTab === 'news'" class="tab-pane fade show active">
+                    <h3>Новости</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Список новостей</div>
+                        <div class="card-body">
+                            <button @click="getNews" class="btn btn-primary mb-3">Получить новости</button>
+                            <div v-if="newsData.length" class="list-group">
+                                <a href="#" class="list-group-item list-group-item-action" 
+                                   v-for="item in newsData" :key="item.id"
+                                   @click.prevent="getNewsItem(item.id)">
+                                    {{ item.title || 'Новость #' + item.id }}
+                                </a>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Адвокаты -->
+                <div v-if="activeTab === 'lawyers'" class="tab-pane fade show active">
+                    <h3>Адвокаты</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Список адвокатов</div>
+                        <div class="card-body">
+                            <button @click="getLawyers" class="btn btn-primary mb-3">Получить адвокатов</button>
+                            <div v-if="lawyersData.length" class="list-group">
+                                <a href="#" class="list-group-item list-group-item-action" 
+                                   v-for="item in lawyersData" :key="item.id"
+                                   @click.prevent="getLawyerItem(item.id)">
+                                    {{ item.name || 'Адвокат #' + item.id }}
+                                </a>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Подкасты -->
+                <div v-if="activeTab === 'podcasts'" class="tab-pane fade show active">
+                    <h3>Подкасты</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Список подкастов</div>
+                        <div class="card-body">
+                            <button @click="getPodcasts" class="btn btn-primary mb-3">Получить подкасты</button>
+                            <div v-if="podcastsData.length" class="list-group">
+                                <a href="#" class="list-group-item list-group-item-action" 
+                                   v-for="item in podcastsData" :key="item.id"
+                                   @click.prevent="getPodcastItem(item.id)">
+                                    {{ item.title || 'Подкаст #' + item.id }}
+                                </a>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Телеграм посты -->
+                <div v-if="activeTab === 'telegram'" class="tab-pane fade show active">
+                    <h3>Телеграм посты</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Список постов</div>
+                        <div class="card-body">
+                            <button @click="getTelegramPosts" class="btn btn-primary mb-3">Получить посты</button>
+                            <div v-if="telegramData.length" class="list-group">
+                                <a href="#" class="list-group-item list-group-item-action" 
+                                   v-for="item in telegramData" :key="item.id"
+                                   @click.prevent="getTelegramPostItem(item.id)">
+                                    {{ item.title || 'Пост #' + item.id }}
+                                </a>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция Главная страница -->
+                <div v-if="activeTab === 'mainpage'" class="tab-pane fade show active">
+                    <h3>Данные для главной страницы</h3>
+                    <div class="card mb-3">
+                        <div class="card-header">Новости на главной</div>
+                        <div class="card-body">
+                            <button @click="getMainpageNews" class="btn btn-primary mb-3">Получить</button>
+                            <div v-if="mainpageNewsData.length" class="list-group">
+                                <div class="list-group-item" v-for="item in mainpageNewsData" :key="item.id">
+                                    {{ item.title || 'Новость #' + item.id }}
+                                </div>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Подкасты на главной</div>
+                        <div class="card-body">
+                            <button @click="getMainpagePodcasts" class="btn btn-primary mb-3">Получить</button>
+                            <div v-if="mainpagePodcastsData.length" class="list-group">
+                                <div class="list-group-item" v-for="item in mainpagePodcastsData" :key="item.id">
+                                    {{ item.title || 'Подкаст #' + item.id }}
+                                </div>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Телеграм посты на главной</div>
+                        <div class="card-body">
+                            <button @click="getMainpageTelegram" class="btn btn-primary mb-3">Получить</button>
+                            <div v-if="mainpageTelegramData.length" class="list-group">
+                                <div class="list-group-item" v-for="item in mainpageTelegramData" :key="item.id">
+                                    {{ item.content || 'Пост #' + item.id }}
+                                </div>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                    
+                    <div class="card mb-3">
+                        <div class="card-header">Адвокаты на главной</div>
+                        <div class="card-body">
+                            <button @click="getMainpageLawyers" class="btn btn-primary mb-3">Получить</button>
+                            <div v-if="mainpageLawyersData.length" class="list-group">
+                                <div class="list-group-item" v-for="item in mainpageLawyersData" :key="item.id">
+                                    {{ item.name || 'Адвокат #' + item.id }}
+                                </div>
+                            </div>
+                            <p v-else>Нет данных</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Секция ответа API -->
+                <div class="card mt-4">
+                    <div class="card-header">Ответ API</div>
+                    <div class="card-body">
+                        <pre class="api-response">{{ apiResponse }}</pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        const { createApp, ref } = Vue;
+        
+        createApp({
+            setup() {
+                const activeTab = ref('auth');
+                const message = ref('');
+                const apiResponse = ref('Здесь будет отображаться ответ API');
+                
+                // Данные для авторизации
+                const token = ref(localStorage.getItem('token') || '');
+                const registerData = ref({ username: '', email: '', password: '' });
+                const loginData = ref({ email: '', password: '' });
+                const refreshData = ref({ refresh: localStorage.getItem('refreshToken') || '' });
+                
+                // Данные для пользователя
+                const profileData = ref({ first_name: '', last_name: '' });
+                const twoFAData = ref({ is_2fa_enabled: false });
+                
+                // Данные для контента
+                const newsData = ref([]);
+                const lawyersData = ref([]);
+                const podcastsData = ref([]);
+                const telegramData = ref([]);
+                
+                // Данные для главной страницы
+                const mainpageNewsData = ref([]);
+                const mainpagePodcastsData = ref([]);
+                const mainpageTelegramData = ref([]);
+                const mainpageLawyersData = ref([]);
+                
+                // Базовая конфигурация для axios
+                const getConfig = () => {
+                    return {
+                        headers: {
+                            'Authorization': token.value ? `Bearer ${token.value}` : '',
+                            'Content-Type': 'application/json'
+                        }
+                    };
+                };
+                
+                // Функция для отображения ответа API
+                const showResponse = (response) => {
+                    apiResponse.value = typeof response === 'string' 
+                        ? response 
+                        : JSON.stringify(response, null, 2);
+                };
+                
+                // Функции для авторизации
+                const register = async () => {
+                    try {
+                        const response = await axios.post('/api/auth/register/', registerData.value);
+                        showResponse(response.data);
+                        message.value = 'Регистрация успешна!';
+                        if (response.data.access) {
+                            token.value = response.data.access;
+                            localStorage.setItem('token', response.data.access);
+                        }
+                        if (response.data.refresh) {
+                            refreshData.value.refresh = response.data.refresh;
+                            localStorage.setItem('refreshToken', response.data.refresh);
+                        }
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка регистрации';
+                    }
+                };
+                
+                const login = async () => {
+                    try {
+                        const response = await axios.post('/api/auth/login/', loginData.value);
+                        showResponse(response.data);
+                        message.value = 'Вход выполнен успешно!';
+                        if (response.data.access) {
+                            token.value = response.data.access;
+                            localStorage.setItem('token', response.data.access);
+                        }
+                        if (response.data.refresh) {
+                            refreshData.value.refresh = response.data.refresh;
+                            localStorage.setItem('refreshToken', response.data.refresh);
+                        }
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка входа';
+                    }
+                };
+                
+                const refreshToken = async () => {
+                    try {
+                        const response = await axios.post('/api/auth/refresh/', refreshData.value);
+                        showResponse(response.data);
+                        message.value = 'Токен обновлен успешно!';
+                        if (response.data.access) {
+                            token.value = response.data.access;
+                            localStorage.setItem('token', response.data.access);
+                        }
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка обновления токена';
+                    }
+                };
+                
+                // Функции для пользователей
+                const updateProfile = async () => {
+                    try {
+                        const response = await axios.put('/api/users/profile/', profileData.value, getConfig());
+                        showResponse(response.data);
+                        message.value = 'Профиль обновлен!';
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка обновления профиля';
+                    }
+                };
+                
+                const update2FA = async () => {
+                    try {
+                        const response = await axios.put('/api/users/update-2fa/', twoFAData.value, getConfig());
+                        showResponse(response.data);
+                        message.value = '2FA настройки обновлены!';
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка обновления 2FA';
+                    }
+                };
+                
+                const deleteAccount = async () => {
+                    if (!confirm('Вы уверены, что хотите удалить аккаунт?')) return;
+                    try {
+                        const response = await axios.delete('/api/users/delete/', getConfig());
+                        showResponse(response.data);
+                        message.value = 'Аккаунт удален!';
+                        localStorage.removeItem('token');
+                        localStorage.removeItem('refreshToken');
+                        token.value = '';
+                        refreshData.value.refresh = '';
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка удаления аккаунта';
+                    }
+                };
+                
+                // Функции для новостей
+                const getNews = async () => {
+                    try {
+                        const response = await axios.get('/api/news/', getConfig());
+                        showResponse(response.data);
+                        newsData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения новостей';
+                    }
+                };
+                
+                const getNewsItem = async (id) => {
+                    try {
+                        const response = await axios.get(`/api/news/${id}/`, getConfig());
+                        showResponse(response.data);
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения новости';
+                    }
+                };
+                
+                // Функции для адвокатов
+                const getLawyers = async () => {
+                    try {
+                        const response = await axios.get('/api/lawyers/', getConfig());
+                        showResponse(response.data);
+                        lawyersData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения адвокатов';
+                    }
+                };
+                
+                const getLawyerItem = async (id) => {
+                    try {
+                        const response = await axios.get(`/api/lawyers/${id}/`, getConfig());
+                        showResponse(response.data);
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения данных адвоката';
+                    }
+                };
+                
+                // Функции для подкастов
+                const getPodcasts = async () => {
+                    try {
+                        const response = await axios.get('/api/podcasts/', getConfig());
+                        showResponse(response.data);
+                        podcastsData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения подкастов';
+                    }
+                };
+                
+                const getPodcastItem = async (id) => {
+                    try {
+                        const response = await axios.get(`/api/podcasts/${id}/`, getConfig());
+                        showResponse(response.data);
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения подкаста';
+                    }
+                };
+                
+                // Функции для телеграм постов
+                const getTelegramPosts = async () => {
+                    try {
+                        const response = await axios.get('/api/telegram-posts/', getConfig());
+                        showResponse(response.data);
+                        telegramData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения телеграм постов';
+                    }
+                };
+                
+                const getTelegramPostItem = async (id) => {
+                    try {
+                        const response = await axios.get(`/api/telegram-posts/${id}/`, getConfig());
+                        showResponse(response.data);
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения телеграм поста';
+                    }
+                };
+                
+                // Функции для главной страницы
+                const getMainpageNews = async () => {
+                    try {
+                        const response = await axios.get('/api/mainpage/news/', getConfig());
+                        showResponse(response.data);
+                        mainpageNewsData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения новостей для главной';
+                    }
+                };
+                
+                const getMainpagePodcasts = async () => {
+                    try {
+                        const response = await axios.get('/api/mainpage/podcasts/', getConfig());
+                        showResponse(response.data);
+                        mainpagePodcastsData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения подкастов для главной';
+                    }
+                };
+                
+                const getMainpageTelegram = async () => {
+                    try {
+                        const response = await axios.get('/api/mainpage/telegram-posts/', getConfig());
+                        showResponse(response.data);
+                        mainpageTelegramData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения телеграм постов для главной';
+                    }
+                };
+                
+                const getMainpageLawyers = async () => {
+                    try {
+                        const response = await axios.get('/api/mainpage/lawyers/', getConfig());
+                        showResponse(response.data);
+                        mainpageLawyersData.value = response.data.results || response.data;
+                    } catch (error) {
+                        showResponse(error.response?.data || error.message);
+                        message.value = 'Ошибка получения адвокатов для главной';
+                    }
+                };
+                
+                return {
+                    activeTab,
+                    message,
+                    apiResponse,
+                    
+                    // Авторизация
+                    registerData,
+                    loginData,
+                    refreshData,
+                    register,
+                    login,
+                    refreshToken,
+                    
+                    // Пользователи
+                    profileData,
+                    twoFAData,
+                    updateProfile,
+                    update2FA,
+                    deleteAccount,
+                    
+                    // Контент
+                    newsData,
+                    lawyersData,
+                    podcastsData,
+                    telegramData,
+                    getNews,
+                    getNewsItem,
+                    getLawyers,
+                    getLawyerItem,
+                    getPodcasts,
+                    getPodcastItem,
+                    getTelegramPosts,
+                    getTelegramPostItem,
+                    
+                    // Главная страница
+                    mainpageNewsData,
+                    mainpagePodcastsData,
+                    mainpageTelegramData,
+                    mainpageLawyersData,
+                    getMainpageNews,
+                    getMainpagePodcasts,
+                    getMainpageTelegram,
+                    getMainpageLawyers
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html> 

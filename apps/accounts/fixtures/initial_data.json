@@ -1,0 +1,68 @@
+[
+  {
+    "model": "accounts.user",
+    "pk": "98e794c9-21cc-41c1-8c19-f4a798be53f3",
+    "fields": {
+      "password": "bcrypt_sha256$$2b$12$Nd5tLf2V2WF5JN.ZRUBLeOY5D3HdBLx1Pm2oqR.5/DCWBc0h4HcIC",
+      "last_login": null,
+      "email": "admin@example.com",
+      "first_name": "Админ",
+      "last_name": "Системы",
+      "middle_name": "",
+      "birth_date": null,
+      "gender": "M",
+      "city": "Астана",
+      "phone_number": "+7(777)777-77-77",
+      "whatsapp_number": "+7(777)777-77-77",
+      "photo": "",
+      "is_staff": true,
+      "is_superuser": true,
+      "is_active": true,
+      "created_at": "2025-04-17T00:00:00Z"
+    }
+  },
+  {
+    "model": "accounts.user",
+    "pk": "b56d00f8-2b51-43c2-b2d7-03d9115b2668",
+    "fields": {
+      "password": "bcrypt_sha256$$2b$12$Nd5tLf2V2WF5JN.ZRUBLeOY5D3HdBLx1Pm2oqR.5/DCWBc0h4HcIC",
+      "last_login": null,
+      "email": "user@example.com",
+      "first_name": "Иван",
+      "last_name": "Петров",
+      "middle_name": "Сергеевич",
+      "birth_date": "1990-01-01",
+      "gender": "M",
+      "city": "Алматы",
+      "phone_number": "+7(777)888-88-88",
+      "whatsapp_number": "+7(777)888-88-88",
+      "photo": "",
+      "is_staff": false,
+      "is_superuser": false,
+      "is_active": true,
+      "created_at": "2025-04-17T00:00:00Z"
+    }
+  },
+  {
+    "model": "accounts.user",
+    "pk": "c67e98d3-4e51-43b2-a2c7-b4e9107b3668",
+    "fields": {
+      "password": "bcrypt_sha256$$2b$12$Nd5tLf2V2WF5JN.ZRUBLeOY5D3HdBLx1Pm2oqR.5/DCWBc0h4HcIC",
+      "last_login": null,
+      "email": "lawyer@example.com",
+      "first_name": "Елена",
+      "last_name": "Сидорова",
+      "middle_name": "Александровна",
+      "birth_date": "1985-05-15",
+      "gender": "F",
+      "city": "Астана",
+      "phone_number": "+7(777)999-99-99",
+      "whatsapp_number": "+7(777)999-99-99",
+      "photo": "",
+      "is_staff": true,
+      "is_superuser": false,
+      "is_active": true,
+      "created_at": "2025-04-17T00:00:00Z"
+    }
+  }
+] 
