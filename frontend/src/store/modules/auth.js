@@ -59,11 +59,43 @@ const actions = {
   async register({ commit }, userData) {
     commit('AUTH_START');
     try {
+      console.log('Отправка данных регистрации:', userData);
+      
+      // Отправляем запрос на регистрацию
       const response = await apiClient.post('/api/auth/register/', userData);
-      // После регистрации нужно выполнить логин
+      
+      console.log('Ответ сервера на регистрацию:', response.data);
+      
+      // После успешной регистрации сохраняем токены и данные пользователя
+      const token = response.data.access;
+      const refreshToken = response.data.refresh;
+      const user = {
+        id: response.data.id,
+        email: response.data.email,
+        first_name: response.data.first_name,
+        last_name: response.data.last_name,
+        is_staff: response.data.is_staff
+      };
+      
+      // Сохраняем токены и данные пользователя
+      localStorage.setItem('token', token);
+      localStorage.setItem('refreshToken', refreshToken);
+      localStorage.setItem('user', JSON.stringify(user));
+      
+      // Устанавливаем токен авторизации в заголовки по умолчанию
+      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+      
+      commit('AUTH_SUCCESS', { token, refreshToken, user });
       return response.data;
     } catch (error) {
-      commit('AUTH_ERROR', error.response ? error.response.data : 'Ошибка регистрации');
+      console.error('Ошибка регистрации:', error);
+      
+      // Обрабатываем ошибки от сервера
+      const errorMessage = error.response 
+        ? (error.response.data.detail || error.response.data) 
+        : 'Ошибка регистрации. Пожалуйста, попробуйте позже.';
+      
+      commit('AUTH_ERROR', errorMessage);
       throw error;
     }
   },
