@@ -369,6 +369,7 @@ export default {
         // Сохраняем пароль в хранилище
         store.dispatch('pgp/setPassword', pgpKeyPassword.value);
         
+        console.log('Генерируем пару ключей с помощью OpenPGP.js...');
         // Генерируем пару ключей с помощью OpenPGP.js
         const { privateKey, publicKey } = await openpgp.generateKey({
           type: 'ecc', // тип: ECC (более современный и быстрый)
@@ -378,9 +379,11 @@ export default {
           format: 'armored' // экспортируем в текстовом формате (ASCII armored)
         });
         
+        console.log('Ключи сгенерированы успешно');
+        
         // Сохраняем сгенерированные ключи
         pgpKeyData.value.public_key = publicKey;
-        pgpKeyData.value.private_key = privateKey;
+        pgpKeyData.value.private_key = privateKey; // Приватный ключ уже зашифрован паролем
         
         // Сохраняем ключи на сервере
         await savePgpKeys();
@@ -422,11 +425,18 @@ export default {
         }
         
         console.log('Публичный ключ:', pgpKeyData.value.public_key.substring(0, 50) + '...');
-        console.log('Приватный ключ:', pgpKeyData.value.private_key.substring(0, 50) + '...');
+        console.log('Приватный ключ (зашифрованный PGP):', pgpKeyData.value.private_key.substring(0, 50) + '...');
         
-        // Сохраняем пароль в хранилище
-        store.dispatch('pgp/setPassword', pgpKeyPassword.value);
+        // Дополнительно шифруем приватный ключ (который уже зашифрован PGP) 
+        // перед отправкой на сервер для дополнительной защиты
+        const additionalEncryptedPrivateKey = await encryptWithAES(
+          pgpKeyData.value.private_key, 
+          pgpKeyPassword.value
+        );
         
+        console.log('Приватный ключ с дополнительным шифрованием')
+        
+        // Отправляем дополнительно зашифрованный приватный ключ
         const response = await fetch('http://localhost:8000/api/mail/pgp-keys/', {
           method: 'POST',
           headers: {
@@ -435,7 +445,7 @@ export default {
           },
           body: JSON.stringify({
             public_key: pgpKeyData.value.public_key,
-            private_key_encrypted: pgpKeyData.value.private_key
+            private_key_encrypted: additionalEncryptedPrivateKey // Дополнительно зашифрованный ключ
           })
         });
         
@@ -446,6 +456,13 @@ export default {
           // Обновляем данные в компоненте
           pgpKeyData.value.public_key = data.public_key;
           pgpKeyData.value.private_key_encrypted = data.private_key_encrypted;
+          
+          // Сохраняем также зашифрованную копию приватного ключа в хранилище
+          store.dispatch('pgp/setKeys', {
+            publicKey: data.public_key,
+            privateKey: data.private_key_encrypted
+          });
+          
           hasPgpKeys.value = true;
           showManualKeyInput.value = false;
           
@@ -461,6 +478,59 @@ export default {
       } finally {
         pgpSaving.value = false;
       }
+    };
+    
+    // Шифрование с AES для дополнительной защиты приватного ключа
+    const encryptWithAES = async (text, password) => {
+      // Создаем соль и ключ на основе пароля
+      const encoder = new TextEncoder();
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const passwordBytes = encoder.encode(password);
+      
+      // Генерируем ключ из пароля и соли
+      const keyMaterial = await crypto.subtle.importKey(
+        'raw',
+        passwordBytes,
+        { name: 'PBKDF2' },
+        false,
+        ['deriveKey']
+      );
+      
+      const key = await crypto.subtle.deriveKey(
+        {
+          name: 'PBKDF2',
+          salt,
+          iterations: 100000,
+          hash: 'SHA-256'
+        },
+        keyMaterial,
+        { name: 'AES-GCM', length: 256 },
+        false,
+        ['encrypt']
+      );
+      
+      // Создаем вектор инициализации
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      
+      // Шифруем данные
+      const dataBytes = encoder.encode(text);
+      const encrypted = await crypto.subtle.encrypt(
+        {
+          name: 'AES-GCM',
+          iv
+        },
+        key,
+        dataBytes
+      );
+      
+      // Объединяем соль, вектор инициализации и зашифрованные данные
+      const encryptedArray = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+      encryptedArray.set(salt, 0);
+      encryptedArray.set(iv, salt.length);
+      encryptedArray.set(new Uint8Array(encrypted), salt.length + iv.length);
+      
+      // Преобразуем в Base64
+      return btoa(String.fromCharCode.apply(null, encryptedArray));
     };
     
     // Изменение пароля

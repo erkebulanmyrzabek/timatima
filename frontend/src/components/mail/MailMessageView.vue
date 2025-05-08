@@ -108,30 +108,43 @@
     
     <div class="message-content">
       <div v-if="message.is_encrypted" class="encrypted-notice">
-        <i class="fas fa-lock"></i> Это сообщение зашифровано
+        <i class="fas fa-lock"></i> Вы смотрите зашифрованное сообщение
       </div>
       
       <div class="message-body">
-        <!-- Отображаем содержимое письма -->
+        <!-- Если сообщение не зашифровано, показываем его содержимое -->
         <div v-if="!message.is_encrypted">
           {{ message.content_encrypted }}
         </div>
+        
+        <!-- Если сообщение зашифровано, показываем его расшифрованное содержимое или статус расшифровки -->
         <div v-else>
+          <!-- Показываем расшифрованное содержимое -->
           <div v-if="decryptedContent" class="decrypted-content">
             {{ decryptedContent }}
           </div>
-          <div v-else class="decrypt-form">
-            <div v-if="decryptError" class="form-error">
-              {{ decryptError }}
+          
+          <!-- Показываем индикатор процесса или ошибку расшифровки -->
+          <div v-else>
+            <div v-if="isDecrypting" class="decrypting-status">
+              <div class="spinner"></div>
+              <p>Расшифровка сообщения...</p>
             </div>
-            <button 
-              class="btn btn-primary btn-decrypt"
-              @click="decryptMessage"
-              :disabled="isDecrypting"
-            >
-              <i class="fas fa-unlock"></i> 
-              {{ isDecrypting ? 'Расшифровка...' : 'Расшифровать сообщение' }}
-            </button>
+            
+            <div v-else-if="decryptError" class="decrypt-error">
+              <div class="decrypt-error-icon">
+                <i class="fas fa-exclamation-circle"></i>
+              </div>
+              <div class="decrypt-error-message">
+                {{ decryptError }}
+              </div>
+              <button 
+                class="btn btn-primary btn-retry"
+                @click="decryptMessage"
+              >
+                <i class="fas fa-sync"></i> Повторить попытку
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -175,21 +188,6 @@ export default {
       });
       
       return hasAttachmentsArray || hasAttachmentsMeta;
-    });
-    
-    // Отслеживаем изменения в props.message для обновления состояния
-    watch(() => props.message, (newMessage) => {
-      console.log('Сообщение обновлено:', newMessage);
-      console.log('Вложения:', newMessage.attachments);
-      console.log('Мета вложений:', newMessage.attachments_meta);
-    }, { deep: true });
-    
-    // При монтировании компонента проверяем вложения
-    onMounted(() => {
-      console.log('Компонент MailMessageView смонтирован');
-      console.log('Сообщение:', props.message);
-      console.log('Вложения:', props.message.attachments);
-      console.log('Мета вложений:', props.message.attachments_meta);
     });
     
     // Определяем иконку для типа файла
@@ -246,6 +244,65 @@ export default {
       emit('reply', props.message);
     };
     
+    // Расшифровка с AES для дополнительной защиты приватного ключа
+    const decryptWithAES = async (encryptedBase64, password) => {
+      try {
+        // Преобразуем Base64 обратно в массив байтов
+        const encryptedString = atob(encryptedBase64);
+        const encryptedBytes = new Uint8Array(encryptedString.length);
+        for (let i = 0; i < encryptedString.length; i++) {
+          encryptedBytes[i] = encryptedString.charCodeAt(i);
+        }
+        
+        // Извлекаем соль, вектор инициализации и зашифрованные данные
+        const salt = encryptedBytes.slice(0, 16);
+        const iv = encryptedBytes.slice(16, 16 + 12);
+        const data = encryptedBytes.slice(16 + 12);
+        
+        // Генерируем ключ из пароля и соли
+        const encoder = new TextEncoder();
+        const passwordBytes = encoder.encode(password);
+        
+        const keyMaterial = await crypto.subtle.importKey(
+          'raw',
+          passwordBytes,
+          { name: 'PBKDF2' },
+          false,
+          ['deriveKey']
+        );
+        
+        const key = await crypto.subtle.deriveKey(
+          {
+            name: 'PBKDF2',
+            salt,
+            iterations: 100000,
+            hash: 'SHA-256'
+          },
+          keyMaterial,
+          { name: 'AES-GCM', length: 256 },
+          false,
+          ['decrypt']
+        );
+        
+        // Расшифровываем данные
+        const decrypted = await crypto.subtle.decrypt(
+          {
+            name: 'AES-GCM',
+            iv
+          },
+          key,
+          data
+        );
+        
+        // Преобразуем расшифрованные данные обратно в строку
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+      } catch (error) {
+        console.error('Ошибка расшифровки AES:', error);
+        throw new Error('Не удалось расшифровать приватный ключ: ' + error.message);
+      }
+    };
+    
     // Расшифровка PGP сообщения
     const decryptMessage = async () => {
       isDecrypting.value = true;
@@ -265,27 +322,32 @@ export default {
 
         // Загружаем ключи из хранилища
         await store.dispatch('pgp/fetchKeys');
-        const privateKey = store.getters['pgp/privateKey'];
+        const encryptedPrivateKey = store.getters['pgp/privateKey'];
         
-        console.log('Приватный ключ получен:', privateKey ? 'Да' : 'Нет');
+        console.log('Зашифрованный приватный ключ получен:', encryptedPrivateKey ? 'Да' : 'Нет');
         console.log('Зашифрованное сообщение:', props.message.content_encrypted);
         
-        if (!privateKey) {
+        if (!encryptedPrivateKey) {
           decryptError.value = 'Не удалось загрузить приватный ключ. Проверьте наличие ключа в профиле.';
           return;
         }
         
+        // Расшифровываем дополнительное шифрование AES
+        console.log('Расшифровываем дополнительное шифрование...');
+        const pgpPrivateKey = await decryptWithAES(encryptedPrivateKey, pgpPassword);
+        console.log('Расшифрован PGP-приватный ключ:', pgpPrivateKey ? 'Да' : 'Нет');
+        
         // Расшифровываем сообщение с помощью PGP ключа
         try {
-          console.log('Читаем приватный ключ...');
-          // Читаем приватный ключ
+          console.log('Читаем зашифрованный приватный ключ...');
+          // Читаем приватный ключ (он уже зашифрован паролем PGP)
           const privateKeyObj = await openpgp.readPrivateKey({
-            armoredKey: privateKey
+            armoredKey: pgpPrivateKey
           });
           console.log('Приватный ключ прочитан успешно');
           
           console.log('Расшифровываем ключ с помощью пароля...');
-          // Расшифровываем ключ с помощью пароля
+          // Расшифровываем ключ с помощью пароля пользователя
           const decryptedPrivateKey = await openpgp.decryptKey({
             privateKey: privateKeyObj,
             passphrase: pgpPassword
@@ -300,7 +362,7 @@ export default {
           console.log('Сообщение прочитано успешно');
           
           console.log('Расшифровываем сообщение...');
-          // Расшифровываем сообщение
+          // Расшифровываем сообщение с помощью расшифрованного приватного ключа
           const { data: decrypted } = await openpgp.decrypt({
             message: encryptedMessage,
             decryptionKeys: decryptedPrivateKey
@@ -326,6 +388,31 @@ export default {
         isDecrypting.value = false;
       }
     };
+    
+    // Автоматически запускаем расшифровку при изменении сообщения, если оно зашифровано
+    watch(() => props.message, (newMessage) => {
+      console.log('Сообщение обновлено:', newMessage);
+      console.log('Вложения:', newMessage.attachments);
+      console.log('Мета вложений:', newMessage.attachments_meta);
+      
+      if (newMessage && newMessage.is_encrypted && !decryptedContent.value) {
+        console.log('Автоматическая расшифровка сообщения...');
+        decryptMessage();
+      }
+    }, { immediate: true, deep: true });
+    
+    // При монтировании компонента проверяем вложения и запускаем расшифровку
+    onMounted(() => {
+      console.log('Компонент MailMessageView смонтирован');
+      console.log('Сообщение:', props.message);
+      console.log('Вложения:', props.message.attachments);
+      console.log('Мета вложений:', props.message.attachments_meta);
+      
+      if (props.message && props.message.is_encrypted && !decryptedContent.value) {
+        console.log('Автоматическая расшифровка сообщения...');
+        decryptMessage();
+      }
+    });
     
     // В блоке script добавляем функцию downloadAttachment
     const downloadAttachment = (attachment) => {
@@ -453,12 +540,63 @@ export default {
   line-height: 1.6;
 }
 
-.encrypted-content {
-  margin-bottom: 20px;
+.decrypted-content {
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background-color: #fff;
+  white-space: pre-wrap;
 }
 
-.btn-decrypt {
-  margin-top: 15px;
+.decrypting-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  background-color: #f5f5f5;
+  border-radius: 4px;
+}
+
+.decrypt-error {
+  background-color: #ffebee;
+  padding: 1.5rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.decrypt-error-icon {
+  font-size: 2rem;
+  color: #e53935;
+}
+
+.decrypt-error-message {
+  color: #c62828;
+  margin-bottom: 1rem;
+}
+
+.btn-retry {
+  background-color: #4caf50;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-retry:hover {
+  background-color: #43a047;
 }
 
 /* Стили для вложений */
@@ -544,6 +682,20 @@ export default {
   background-color: rgba(var(--primary-color-rgb), 0.1);
 }
 
+.spinner {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(76, 175, 80, 0.3);
+  border-radius: 50%;
+  border-top-color: #4caf50;
+  animation: spin 1s linear infinite;
+  margin-bottom: 10px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 @media (max-width: 768px) {
   .attachments-list {
     grid-template-columns: 1fr;
@@ -562,30 +714,5 @@ export default {
     width: 100%;
     justify-content: space-between;
   }
-}
-
-.decrypt-form {
-  background-color: #f5f5f5;
-  padding: 1.5rem;
-  border-radius: 4px;
-  margin: 1rem 0;
-  text-align: center;
-}
-
-.btn-decrypt {
-  margin-top: 1rem;
-}
-
-.decrypted-content {
-  padding: 1rem;
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-  background-color: #fff;
-  white-space: pre-wrap;
-}
-
-.form-error {
-  color: #e53935;
-  margin-bottom: 1rem;
 }
 </style> 

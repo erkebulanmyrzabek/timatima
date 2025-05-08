@@ -136,11 +136,16 @@ const actions = {
   },
   
   // Выход из системы
-  logout({ commit }) {
+  logout({ commit, dispatch }) {
     commit('LOGOUT');
     localStorage.removeItem('token');
     localStorage.removeItem('refreshToken');
     localStorage.removeItem('user');
+    localStorage.removeItem('pgpPassword'); // Очищаем и пароль от PGP
+    
+    // Очищаем все ключи в памяти
+    dispatch('pgp/clearAllKeys', null, { root: true });
+    
     delete axios.defaults.headers.common['Authorization'];
     // Перенаправление на страницу входа выполняется в компоненте
   },
