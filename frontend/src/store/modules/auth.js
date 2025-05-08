@@ -7,15 +7,18 @@ const state = {
   refreshToken: localStorage.getItem('refreshToken') || null,
   user: JSON.parse(localStorage.getItem('user')) || null,
   loading: false,
-  error: null
+  error: null,
+  pgpPassword: localStorage.getItem('pgpPassword') || null
 };
 
 // Геттеры
 const getters = {
   isAuthenticated: state => !!state.token,
+  token: state => state.token,
   user: state => state.user,
   loading: state => state.loading,
-  error: state => state.error
+  error: state => state.error,
+  pgpPassword: state => state.pgpPassword
 };
 
 // Мутации
@@ -39,9 +42,14 @@ const mutations = {
     state.token = null;
     state.refreshToken = null;
     state.user = null;
+    state.pgpPassword = null;
   },
   UPDATE_USER(state, user) {
     state.user = { ...state.user, ...user };
+  },
+  SET_PGP_PASSWORD(state, password) {
+    state.pgpPassword = password;
+    localStorage.setItem('pgpPassword', password);
   }
 };
 
@@ -172,6 +180,11 @@ const actions = {
     } catch (error) {
       throw error;
     }
+  },
+
+  // Установка PGP пароля
+  setPgpPassword({ commit }, password) {
+    commit('SET_PGP_PASSWORD', password);
   }
 };
 

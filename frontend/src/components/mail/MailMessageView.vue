@@ -35,22 +35,15 @@
     
     <div class="message-divider"></div>
     
-    <!-- Отладочная информация о вложениях -->
-    <div class="debug-info">
-      <p>has_attachments: {{ hasAttachments }}</p>
-      <p>attachments: {{ JSON.stringify(message.attachments) || '[]' }}</p>
-      <p>attachments_meta: {{ JSON.stringify(message.attachments_meta) || '[]' }}</p>
-      <p>Длина attachments: {{ message.attachments ? message.attachments.length : 0 }}</p>
-      <p>Длина attachments_meta: {{ message.attachments_meta ? message.attachments_meta.length : 0 }}</p>
-    </div>
-    
     <!-- Секция отображения вложений -->
     <div v-if="hasAttachments" class="message-attachments">
       <h3>
         <i class="fas fa-paperclip"></i> 
-        Вложения ({{ message.attachments ? message.attachments.length : 0 }})
+        Вложения ({{ message.attachments && message.attachments.length ? message.attachments.length : (message.attachments_meta && message.attachments_meta.length ? message.attachments_meta.length : 0) }})
       </h3>
-      <div class="attachments-list">
+      
+      <!-- Отображение вложений из attachments (ManyToMany) -->
+      <div v-if="message.attachments && message.attachments.length > 0" class="attachments-list">
         <div 
           v-for="attachment in message.attachments" 
           :key="attachment.id" 
@@ -68,10 +61,11 @@
           <div class="attachment-actions">
             <a 
               :href="attachment.file_url" 
-              download
+              :download="attachment.filename"
               class="attachment-download"
               target="_blank"
               title="Скачать файл"
+              @click.prevent="downloadAttachment(attachment)"
             >
               <i class="fas fa-download"></i>
             </a>
@@ -80,35 +74,33 @@
       </div>
       
       <!-- Отображение вложений из meta-данных, если нет обычных вложений -->
-      <div v-if="message.attachments.length === 0 && message.attachments_meta && message.attachments_meta.length > 0">
-        <h4>Мета-данные вложений:</h4>
-        <div class="attachments-list">
-          <div 
-            v-for="(attachment, index) in message.attachments_meta" 
-            :key="index" 
-            class="attachment-item"
-          >
-            <div class="attachment-icon">
-              <i class="fas" :class="getFileIcon(attachment.type)"></i>
+      <div v-else-if="message.attachments_meta && message.attachments_meta.length > 0" class="attachments-list">
+        <div 
+          v-for="(attachment, index) in message.attachments_meta" 
+          :key="index" 
+          class="attachment-item"
+        >
+          <div class="attachment-icon">
+            <i class="fas" :class="getFileIcon(attachment.type)"></i>
+          </div>
+          <div class="attachment-details">
+            <div class="attachment-name">{{ attachment.name }}</div>
+            <div class="attachment-meta">
+              {{ formatFileSize(attachment.size) }}
             </div>
-            <div class="attachment-details">
-              <div class="attachment-name">{{ attachment.name }}</div>
-              <div class="attachment-meta">
-                {{ formatFileSize(attachment.size) }}
-              </div>
-            </div>
-            <div class="attachment-actions">
-              <a 
-                v-if="attachment.url"
-                :href="attachment.url" 
-                download
-                class="attachment-download"
-                target="_blank"
-                title="Скачать файл"
-              >
-                <i class="fas fa-download"></i>
-              </a>
-            </div>
+          </div>
+          <div class="attachment-actions">
+            <a 
+              v-if="attachment.url"
+              :href="attachment.url" 
+              :download="attachment.name"
+              class="attachment-download"
+              target="_blank"
+              title="Скачать файл"
+              @click.prevent="downloadAttachment(attachment)"
+            >
+              <i class="fas fa-download"></i>
+            </a>
           </div>
         </div>
       </div>
@@ -125,16 +117,22 @@
           {{ message.content_encrypted }}
         </div>
         <div v-else>
-          <div class="encrypted-content">
-            {{ decryptedContent || 'Содержимое сообщения зашифровано' }}
+          <div v-if="decryptedContent" class="decrypted-content">
+            {{ decryptedContent }}
           </div>
-          <button 
-            v-if="!decryptedContent" 
-            class="btn btn-primary btn-decrypt"
-            @click="decryptMessage"
-          >
-            Расшифровать сообщение
-          </button>
+          <div v-else class="decrypt-form">
+            <div v-if="decryptError" class="form-error">
+              {{ decryptError }}
+            </div>
+            <button 
+              class="btn btn-primary btn-decrypt"
+              @click="decryptMessage"
+              :disabled="isDecrypting"
+            >
+              <i class="fas fa-unlock"></i> 
+              {{ isDecrypting ? 'Расшифровка...' : 'Расшифровать сообщение' }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -143,6 +141,8 @@
 
 <script>
 import { ref, computed, onMounted, watch } from 'vue';
+import * as openpgp from 'openpgp';
+import { useStore } from 'vuex';
 
 export default {
   name: 'MailMessageView',
@@ -154,15 +154,18 @@ export default {
   },
   emits: ['back', 'delete', 'reply'],
   setup(props, { emit }) {
+    const store = useStore();
     const decryptedContent = ref('');
+    const decryptError = ref('');
+    const isDecrypting = ref(false);
     
     // Проверяем наличие вложений
     const hasAttachments = computed(() => {
       // Проверяем массив вложений
-      const hasAttachmentsArray = props.message.attachments && props.message.attachments.length > 0;
+      const hasAttachmentsArray = props.message.attachments && Array.isArray(props.message.attachments) && props.message.attachments.length > 0;
       
       // Проверяем мета-данные вложений
-      const hasAttachmentsMeta = props.message.attachments_meta && props.message.attachments_meta.length > 0;
+      const hasAttachmentsMeta = props.message.attachments_meta && Array.isArray(props.message.attachments_meta) && props.message.attachments_meta.length > 0;
       
       console.log('Данные вложений:', {
         attachments: props.message.attachments,
@@ -243,15 +246,114 @@ export default {
       emit('reply', props.message);
     };
     
-    // Эмуляция расшифровки сообщения
-    const decryptMessage = () => {
-      // В реальном приложении здесь должна быть логика расшифровки
-      decryptedContent.value = props.message.content_encrypted || 
-        'Содержимое этого сообщения было успешно расшифровано.';
+    // Расшифровка PGP сообщения
+    const decryptMessage = async () => {
+      isDecrypting.value = true;
+      decryptError.value = '';
+      
+      try {
+        // Получаем пароль из хранилища
+        const pgpPassword = store.getters['pgp/password'];
+        
+        if (!pgpPassword) {
+          decryptError.value = 'Пароль PGP не найден. Пожалуйста, установите пароль в настройках профиля.';
+          return;
+        }
+
+        console.log('Начинаем процесс расшифровки...');
+        console.log('Пароль получен:', pgpPassword ? 'Да' : 'Нет');
+
+        // Загружаем ключи из хранилища
+        await store.dispatch('pgp/fetchKeys');
+        const privateKey = store.getters['pgp/privateKey'];
+        
+        console.log('Приватный ключ получен:', privateKey ? 'Да' : 'Нет');
+        console.log('Зашифрованное сообщение:', props.message.content_encrypted);
+        
+        if (!privateKey) {
+          decryptError.value = 'Не удалось загрузить приватный ключ. Проверьте наличие ключа в профиле.';
+          return;
+        }
+        
+        // Расшифровываем сообщение с помощью PGP ключа
+        try {
+          console.log('Читаем приватный ключ...');
+          // Читаем приватный ключ
+          const privateKeyObj = await openpgp.readPrivateKey({
+            armoredKey: privateKey
+          });
+          console.log('Приватный ключ прочитан успешно');
+          
+          console.log('Расшифровываем ключ с помощью пароля...');
+          // Расшифровываем ключ с помощью пароля
+          const decryptedPrivateKey = await openpgp.decryptKey({
+            privateKey: privateKeyObj,
+            passphrase: pgpPassword
+          });
+          console.log('Ключ расшифрован успешно');
+          
+          console.log('Читаем зашифрованное сообщение...');
+          // Читаем зашифрованное сообщение
+          const encryptedMessage = await openpgp.readMessage({
+            armoredMessage: props.message.content_encrypted
+          });
+          console.log('Сообщение прочитано успешно');
+          
+          console.log('Расшифровываем сообщение...');
+          // Расшифровываем сообщение
+          const { data: decrypted } = await openpgp.decrypt({
+            message: encryptedMessage,
+            decryptionKeys: decryptedPrivateKey
+          });
+          console.log('Сообщение расшифровано успешно');
+          
+          // Показываем расшифрованное сообщение
+          decryptedContent.value = decrypted;
+        } catch (error) {
+          console.error('Ошибка расшифровки:', error);
+          if (error.message.includes('passphrase')) {
+            decryptError.value = 'Неверный пароль для расшифровки ключа';
+          } else if (error.message.includes('No decryption key packets found')) {
+            decryptError.value = 'Не удалось найти ключ для расшифровки. Возможно, сообщение зашифровано другим ключом.';
+          } else {
+            decryptError.value = 'Не удалось расшифровать сообщение: ' + error.message;
+          }
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки ключа:', error);
+        decryptError.value = 'Ошибка загрузки ключа: ' + error.message;
+      } finally {
+        isDecrypting.value = false;
+      }
+    };
+    
+    // В блоке script добавляем функцию downloadAttachment
+    const downloadAttachment = (attachment) => {
+      // Создаем невидимый элемент ссылки для программного скачивания
+      const link = document.createElement('a');
+      
+      // Проверяем тип вложения (обычное или из metadata)
+      const isMetaAttachment = !attachment.file_url && attachment.url;
+      
+      // Используем соответствующие поля в зависимости от типа вложения
+      link.href = isMetaAttachment ? attachment.url : attachment.file_url;
+      link.download = isMetaAttachment ? attachment.name : attachment.filename;
+      link.target = '_blank';
+      
+      // Добавляем ссылку в DOM и активируем клик
+      document.body.appendChild(link);
+      link.click();
+      
+      // Удаляем ссылку из DOM
+      setTimeout(() => {
+        document.body.removeChild(link);
+      }, 100);
     };
     
     return {
       decryptedContent,
+      decryptError,
+      isDecrypting,
       hasAttachments,
       formatDate,
       goBack,
@@ -259,7 +361,8 @@ export default {
       replyToMessage,
       decryptMessage,
       getFileIcon,
-      formatFileSize
+      formatFileSize,
+      downloadAttachment
     };
   }
 }
@@ -459,5 +562,30 @@ export default {
     width: 100%;
     justify-content: space-between;
   }
+}
+
+.decrypt-form {
+  background-color: #f5f5f5;
+  padding: 1.5rem;
+  border-radius: 4px;
+  margin: 1rem 0;
+  text-align: center;
+}
+
+.btn-decrypt {
+  margin-top: 1rem;
+}
+
+.decrypted-content {
+  padding: 1rem;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  background-color: #fff;
+  white-space: pre-wrap;
+}
+
+.form-error {
+  color: #e53935;
+  margin-bottom: 1rem;
 }
 </style> 

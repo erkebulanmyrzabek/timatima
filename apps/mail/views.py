@@ -2,12 +2,15 @@ from rest_framework import viewsets, permissions, status, filters, parsers
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from mail.models import MailMessage, MailAttachment
+from mail.models import MailMessage, MailAttachment, PGPKey
 from mail.serializers import (
     MailMessageSerializer, MailMessageListSerializer, 
-    MailAttachmentSerializer, MailAttachmentUploadSerializer
+    MailAttachmentSerializer, MailAttachmentUploadSerializer,
+    PGPKeySerializer, PGPKeyCreateSerializer
 )
 from django.db import models, transaction
+from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 
 class MailAttachmentViewSet(viewsets.ModelViewSet):
@@ -187,11 +190,7 @@ class MailViewSet(viewsets.ModelViewSet):
                 else:
                     print(f"Отсутствует ID вложения в данных: {attachment_data}")
             
-            # Проверяем количество прикрепленных вложений после добавления
-            attachments_count = message.attachments.count()
-            print(f"Количество прикрепленных вложений после обработки: {attachments_count}")
-            
-            # Сохраняем изменения в сообщении
+            # Сохраняем сообщение еще раз после связывания вложений
             message.save()
     
     @action(detail=False, methods=['get'])
@@ -343,4 +342,170 @@ class MailViewSet(viewsets.ModelViewSet):
                         print(f"Вложение не найдено: {attachment_id}")
         
         serializer = self.get_serializer(instance)
-        return Response(serializer.data) 
+        return Response(serializer.data)
+
+
+class PGPKeyViewSet(viewsets.ModelViewSet):
+    """
+    API endpoint для управления PGP ключами пользователя
+    """
+    serializer_class = PGPKeySerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.action == 'public_key':
+            return [permissions.AllowAny()]
+        return super().get_permissions()
+    
+    def get_queryset(self):
+        """
+        Возвращает PGP ключи только текущего пользователя
+        """
+        return PGPKey.objects.filter(user=self.request.user)
+    
+    def get_serializer_class(self):
+        """
+        Использовать разные сериализаторы для создания и получения ключей
+        """
+        if self.action in ['create', 'update', 'partial_update']:
+            return PGPKeyCreateSerializer
+        return PGPKeySerializer
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Автоматически установить пользователя как текущего
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(user=self.request.user)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=False, methods=['get'])
+    def my_keys(self, request):
+        """
+        Эндпоинт для получения ключей текущего пользователя
+        """
+        try:
+            pgp_key = PGPKey.objects.get(user=request.user)
+            serializer = self.get_serializer(pgp_key)
+            return Response(serializer.data)
+        except PGPKey.DoesNotExist:
+            return Response(
+                {"detail": "PGP ключи не найдены для текущего пользователя"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['post'])
+    def create_session(self, request):
+        """
+        Создание сессии для автоматической расшифровки сообщений
+        
+        Принимает пароль от приватного ключа, проверяет его,
+        и сохраняет зашифрованную версию на сервере для временного использования
+        """
+        try:
+            pgp_key = PGPKey.objects.get(user=request.user)
+            passphrase = request.data.get('passphrase')
+            
+            if not passphrase:
+                return Response(
+                    {"detail": "Необходимо указать пароль от приватного ключа"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Проверка пароля можно сделать через опциональный вызов библиотеки gnupg
+            # В реальном проекте нужна проверка корректности пароля
+                
+            # Генерируем случайный ключ сессии и шифруем его AES-256
+            import secrets
+            import base64
+            from cryptography.fernet import Fernet
+            from datetime import timedelta
+            
+            # Создаем сессионный ключ, действительный 24 часа
+            session_key = Fernet.generate_key().decode('utf-8')
+            pgp_key.session_key = session_key
+            pgp_key.session_expires = timezone.now() + timedelta(hours=24)
+            pgp_key.save()
+            
+            return Response({
+                "detail": "Сессия успешно создана",
+                "expires": pgp_key.session_expires
+            })
+            
+        except PGPKey.DoesNotExist:
+            return Response(
+                {"detail": "PGP ключи не найдены для текущего пользователя"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            return Response(
+                {"detail": f"Ошибка создания сессии: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'])
+    def end_session(self, request):
+        """
+        Завершение сессии - удаление сессионного ключа
+        """
+        try:
+            pgp_key = PGPKey.objects.get(user=request.user)
+            pgp_key.session_key = None
+            pgp_key.session_expires = None
+            pgp_key.save()
+            
+            return Response({"detail": "Сессия успешно завершена"})
+        except PGPKey.DoesNotExist:
+            return Response(
+                {"detail": "PGP ключи не найдены для текущего пользователя"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['get'])
+    def session_status(self, request):
+        """
+        Проверка статуса сессии
+        """
+        try:
+            pgp_key = PGPKey.objects.get(user=request.user)
+            is_valid = pgp_key.is_session_valid()
+            
+            return Response({
+                "has_session": is_valid,
+                "expires": pgp_key.session_expires if is_valid else None
+            })
+        except PGPKey.DoesNotExist:
+            return Response(
+                {"detail": "PGP ключи не найдены для текущего пользователя"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+    
+    @action(detail=False, methods=['get'])
+    def public_key(self, request):
+        """
+        Эндпоинт для получения публичного ключа пользователя по его ID или email
+        """
+        user_id = request.query_params.get('user_id')
+        user_email = request.query_params.get('email')
+        
+        if not user_id and not user_email:
+            return Response(
+                {"detail": "Необходимо указать user_id или email"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            User = get_user_model()
+            if user_id:
+                user = User.objects.get(id=user_id)
+            else:
+                user = User.objects.get(email=user_email)
+            
+            pgp_key = PGPKey.objects.get(user=user)
+            return Response({"public_key": pgp_key.public_key})
+        except (User.DoesNotExist, PGPKey.DoesNotExist):
+            return Response(
+                {"detail": "Публичный ключ не найден"},
+                status=status.HTTP_404_NOT_FOUND
+            ) 

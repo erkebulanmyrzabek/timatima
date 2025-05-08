@@ -109,9 +109,13 @@
       :draft="editingDraft"
       :reply-to="replyToData"
       @close="closeComposeModal" 
-      @send="sendMessage"
-      @save-draft="saveDraft"
+      @success="showNotification"
     />
+    
+    <!-- Уведомления -->
+    <div v-if="notification.show" class="notification" :class="notification.type">
+      {{ notification.message }}
+    </div>
   </div>
 </template>
 
@@ -138,6 +142,11 @@ export default {
     const currentMessage = ref(null);
     const editingDraft = ref(null);
     const replyToData = ref(null);
+    const notification = ref({
+      show: false,
+      message: '',
+      type: 'success'
+    });
     
     // Загрузка данных почтовых ящиков
     const loadCurrentFolder = async () => {
@@ -245,32 +254,21 @@ export default {
       showComposeModal.value = true;
     };
     
-    // Отправка сообщения
-    const sendMessage = async (messageData) => {
-      try {
-        console.log('Отправка сообщения из MailPage:', messageData);
-        await store.dispatch('mail/sendMessage', messageData);
-        console.log('Сообщение успешно отправлено');
-        closeComposeModal();
-        
-        // Переключаемся на папку "Отправленные" и загружаем данные
-        activeFolder.value = 'sent';
-        await loadCurrentFolder();
-      } catch (error) {
-        console.error('Ошибка отправки сообщения:', error);
-      }
-    };
-    
-    // Сохранение черновика
-    const saveDraft = async (messageData) => {
-      try {
-        await store.dispatch('mail/saveDraft', messageData);
-        closeComposeModal();
-        activeFolder.value = 'drafts';
-        loadCurrentFolder();
-      } catch (error) {
-        console.error('Ошибка сохранения черновика:', error);
-      }
+    // Показать уведомление
+    const showNotification = (message, type = 'success') => {
+      notification.value = {
+        show: true,
+        message,
+        type
+      };
+      
+      // Автоматически скрыть уведомление через 3 секунды
+      setTimeout(() => {
+        notification.value.show = false;
+      }, 3000);
+      
+      // Перезагрузить текущую папку
+      loadCurrentFolder();
     };
     
     return {
@@ -279,13 +277,14 @@ export default {
       currentMessage,
       editingDraft,
       replyToData,
+      notification,
       inbox: computed(() => store.getters['mail/inbox']),
       sent: computed(() => store.getters['mail/sent']),
       drafts: computed(() => store.getters['mail/drafts']),
       trash: computed(() => store.getters['mail/trash']),
       loading: computed(() => store.getters['mail/loading']),
-      inboxCount: computed(() => store.getters['mail/inbox'].length),
-      draftsCount: computed(() => store.getters['mail/drafts'].length),
+      inboxCount: computed(() => store.getters['mail/unreadCount']),
+      draftsCount: computed(() => store.getters['mail/draftsCount']),
       setActiveFolder,
       openComposeModal,
       closeComposeModal,
@@ -295,8 +294,7 @@ export default {
       deleteOpenedMessage,
       editDraft,
       replyToMessage,
-      sendMessage,
-      saveDraft
+      showNotification
     };
   }
 }
@@ -402,6 +400,45 @@ export default {
   
   .mail-sidebar {
     margin-bottom: 20px;
+  }
+}
+
+/* Стили для уведомлений */
+.notification {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  padding: 15px 20px;
+  border-radius: 4px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.2);
+  z-index: 1100;
+  max-width: 350px;
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.notification.success {
+  background-color: #4caf50;
+  color: white;
+}
+
+.notification.error {
+  background-color: #f44336;
+  color: white;
+}
+
+.notification.info {
+  background-color: #2196f3;
+  color: white;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
   }
 }
 </style> 

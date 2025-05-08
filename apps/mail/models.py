@@ -2,6 +2,7 @@ from django.db import models
 import uuid
 import os
 from django.conf import settings
+from django.utils import timezone
 
 
 def get_attachment_file_path(instance, filename):
@@ -87,4 +88,39 @@ class MailMessage(models.Model):
         elif user.id == self.to_user.id:
             return self.is_deleted_by_recipient
         return False 
+    
+
+class PGPKey(models.Model):
+    """
+    Модель для хранения PGP ключей пользователей
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.CASCADE, 
+        related_name='pgp_key',
+        verbose_name="Пользователь"
+    )
+    public_key = models.TextField(verbose_name="Публичный ключ")
+    private_key_encrypted = models.TextField(verbose_name="Зашифрованный приватный ключ (AES-256)")
+    session_key = models.CharField(max_length=255, null=True, blank=True, verbose_name="Ключ сессии (AES-256)")
+    session_expires = models.DateTimeField(null=True, blank=True, verbose_name="Срок действия ключа сессии")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Дата создания")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Дата обновления")
+
+    class Meta:
+        verbose_name = "PGP ключ"
+        verbose_name_plural = "PGP ключи"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PGP ключ: {self.user.email}"
+    
+    def is_session_valid(self):
+        """
+        Проверяет, действителен ли ключ сессии
+        """
+        if not self.session_key or not self.session_expires:
+            return False
+        return self.session_expires > timezone.now()
     

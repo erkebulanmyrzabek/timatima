@@ -3,12 +3,18 @@ import os
 import subprocess
 import smtplib
 import logging
+import base64
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.application import MIMEApplication
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
 from django.core.exceptions import ObjectDoesNotExist
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
+from cryptography.fernet import Fernet
+import hashlib
 
 logger = logging.getLogger('mail_service')
 
@@ -51,6 +57,99 @@ def generate_pgp_key_pair(user_email, passphrase):
     private_key = gpg.export_keys(key.fingerprint, True, passphrase=passphrase)
     
     return public_key, private_key
+
+
+def encrypt_with_aes(data, key):
+    """
+    Шифрует данные с использованием AES-256
+    
+    Args:
+        data: Данные для шифрования (строка или байты)
+        key: Ключ шифрования (пароль пользователя)
+        
+    Returns:
+        str: Зашифрованные данные в base64
+    """
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    
+    # Создаем 256-битный ключ из пароля пользователя с использованием SHA-256
+    hashed_key = hashlib.sha256(key.encode('utf-8')).digest()
+    
+    # Генерируем IV (вектор инициализации)
+    iv = os.urandom(16)
+    
+    # Создаем padder для данных, так как AES требует, чтобы данные были кратны размеру блока
+    padder = padding.PKCS7(algorithms.AES.block_size).padder()
+    padded_data = padder.update(data) + padder.finalize()
+    
+    # Создаем шифратор
+    cipher = Cipher(algorithms.AES(hashed_key), modes.CBC(iv), backend=default_backend())
+    encryptor = cipher.encryptor()
+    
+    # Шифруем данные
+    encrypted_data = encryptor.update(padded_data) + encryptor.finalize()
+    
+    # Объединяем IV и зашифрованные данные и кодируем в base64
+    result = base64.b64encode(iv + encrypted_data).decode('utf-8')
+    
+    return result
+
+
+def decrypt_with_aes(encrypted_data, key):
+    """
+    Расшифровывает данные, зашифрованные с использованием AES-256
+    
+    Args:
+        encrypted_data: Зашифрованные данные в base64
+        key: Ключ шифрования (пароль пользователя)
+        
+    Returns:
+        str: Расшифрованные данные
+    """
+    # Декодируем base64
+    encrypted_bytes = base64.b64decode(encrypted_data)
+    
+    # Получаем IV (первые 16 байт)
+    iv = encrypted_bytes[:16]
+    
+    # Получаем зашифрованные данные (остаток)
+    ciphertext = encrypted_bytes[16:]
+    
+    # Создаем 256-битный ключ из пароля пользователя с использованием SHA-256
+    hashed_key = hashlib.sha256(key.encode('utf-8')).digest()
+    
+    # Создаем дешифратор
+    cipher = Cipher(algorithms.AES(hashed_key), modes.CBC(iv), backend=default_backend())
+    decryptor = cipher.decryptor()
+    
+    # Расшифровываем данные
+    padded_data = decryptor.update(ciphertext) + decryptor.finalize()
+    
+    # Удаляем padding
+    unpadder = padding.PKCS7(algorithms.AES.block_size).unpadder()
+    data = unpadder.update(padded_data) + unpadder.finalize()
+    
+    # Возвращаем расшифрованные данные в виде строки
+    return data.decode('utf-8')
+
+
+def save_private_key_encrypted(private_key, passphrase):
+    """
+    Шифрует приватный ключ паролем с использованием AES-256
+    """
+    return encrypt_with_aes(private_key, passphrase)
+
+
+def decrypt_private_key(private_key_encrypted, passphrase):
+    """
+    Расшифровывает приватный ключ с помощью пароля
+    """
+    try:
+        return decrypt_with_aes(private_key_encrypted, passphrase)
+    except Exception as e:
+        logger.error(f"Ошибка расшифровки приватного ключа: {e}")
+        raise ValueError("Неверный пароль или поврежденный ключ")
 
 
 def encrypt_message(content, recipient_public_key):

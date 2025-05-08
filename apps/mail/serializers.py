@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from mail.models import MailMessage, MailAttachment
+from mail.models import MailMessage, MailAttachment, PGPKey
 from django.contrib.auth import get_user_model
 import uuid
 
@@ -67,6 +67,35 @@ class MailMessageSerializer(serializers.ModelSerializer):
         except ValueError:
             raise serializers.ValidationError("Must be a valid UUID.")
     
+    def to_representation(self, instance):
+        """
+        Переопределяем метод для добавления дополнительных данных при сериализации
+        """
+        data = super().to_representation(instance)
+        
+        # Проверяем, есть ли вложения через связь ManyToMany
+        if not data['attachments'] and instance.attachments_meta:
+            # Если в модели нет связанных вложений, но есть метаданные, 
+            # попробуем восстановить связи
+            for attachment_data in instance.attachments_meta:
+                attachment_id = attachment_data.get('id')
+                if attachment_id:
+                    try:
+                        attachment = MailAttachment.objects.get(id=attachment_id)
+                        instance.attachments.add(attachment)
+                    except MailAttachment.DoesNotExist:
+                        pass
+            
+            # Обновляем данные вложений после восстановления связей
+            if instance.attachments.exists():
+                serializer = MailAttachmentSerializer(
+                    instance.attachments.all(), many=True, 
+                    context=self.context
+                )
+                data['attachments'] = serializer.data
+        
+        return data
+
     def create(self, validated_data):
         # Устанавливаем отправителя как текущего пользователя
         validated_data['from_user'] = self.context['request'].user
@@ -129,6 +158,9 @@ class MailMessageListSerializer(serializers.ModelSerializer):
                         print(f"Вложение не найдено: {attachment_id}")
                     except Exception as e:
                         print(f"Ошибка при обработке вложения: {e}")
+            
+            # Сохраняем сообщение после связывания вложений
+            obj.save()
         
         # Если есть любые вложения, возвращаем True
         return has_attachments or has_attachments_meta
@@ -156,4 +188,77 @@ class MailAttachmentUploadSerializer(serializers.ModelSerializer):
         )
         attachment.save()
         
-        return attachment 
+        return attachment
+
+
+class PGPKeySerializer(serializers.ModelSerializer):
+    """
+    Сериализатор модели PGPKey для чтения и создания PGP ключей
+    """
+    has_session = serializers.SerializerMethodField()
+    session_expires = serializers.DateTimeField(read_only=True)
+    
+    class Meta:
+        model = PGPKey
+        fields = ['id', 'user', 'public_key', 'private_key_encrypted', 'has_session', 'session_expires', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'user', 'has_session', 'session_expires', 'created_at', 'updated_at']
+    
+    def get_has_session(self, obj):
+        """
+        Показывает, есть ли активная сессия
+        """
+        return obj.is_session_valid()
+
+
+class PGPKeyCreateSerializer(serializers.ModelSerializer):
+    """
+    Сериализатор для создания пары PGP ключей
+    """
+    class Meta:
+        model = PGPKey
+        fields = ['public_key', 'private_key_encrypted']
+
+    def create(self, validated_data):
+        """
+        Создает новую запись PGPKey для текущего пользователя
+        """
+        user = self.context['request'].user
+        
+        # Проверяем, есть ли уже ключи у пользователя
+        try:
+            pgp_key = PGPKey.objects.get(user=user)
+            # Обновляем существующие ключи
+            pgp_key.public_key = validated_data.get('public_key', pgp_key.public_key)
+            pgp_key.private_key_encrypted = validated_data.get('private_key_encrypted', pgp_key.private_key_encrypted)
+            pgp_key.save()
+        except PGPKey.DoesNotExist:
+            # Создаем новую запись
+            pgp_key = PGPKey.objects.create(
+                user=user,
+                public_key=validated_data.get('public_key'),
+                private_key_encrypted=validated_data.get('private_key_encrypted')
+            )
+        
+        return pgp_key
+
+
+class PGPSessionCreateSerializer(serializers.Serializer):
+    """
+    Сериализатор для создания сессии для PGP ключа
+    """
+    passphrase = serializers.CharField(write_only=True)
+    
+    def validate(self, data):
+        """
+        Проверяет, существует ли PGP ключ для пользователя
+        """
+        user = self.context['request'].user
+        
+        try:
+            PGPKey.objects.get(user=user)
+        except PGPKey.DoesNotExist:
+            raise serializers.ValidationError({
+                'passphrase': 'У вас нет настроенных PGP ключей. Сначала создайте ключи в профиле.'
+            })
+            
+        return data 

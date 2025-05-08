@@ -111,8 +111,19 @@
             />
             <label class="form-label" for="encrypt">
               <i class="fas" :class="message.is_encrypted ? 'fa-lock' : 'fa-lock-open'"></i>
-              Зашифровать сообщение
+              Зашифровать сообщение (PGP)
             </label>
+            <div v-if="message.is_encrypted" class="encryption-info">
+              <div v-if="recipientPublicKeyLoaded" class="encryption-status success">
+                <i class="fas fa-check-circle"></i> Публичный ключ получателя загружен, сообщение будет зашифровано
+              </div>
+              <div v-else-if="recipientEmail" class="encryption-status warning">
+                <i class="fas fa-exclamation-triangle"></i> Получатель не указал публичный ключ, шифрование невозможно
+              </div>
+              <div v-else class="encryption-status notice">
+                <i class="fas fa-info-circle"></i> Для шифрования укажите получателя с настроенным PGP ключом
+              </div>
+            </div>
           </div>
           
           <div class="modal-actions">
@@ -141,6 +152,8 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import usersService from '@/services/users';
 import filesService from '@/services/files';
+import mailService from '@/services/mail';
+import * as openpgp from 'openpgp';
 
 export default {
   name: 'MailComposeModal',
@@ -154,7 +167,7 @@ export default {
       default: null
     }
   },
-  emits: ['close', 'send', 'save-draft'],
+  emits: ['close', 'success'],
   setup(props, { emit }) {
     // Данные для работы с получателем
     const recipientEmail = ref('');
@@ -183,36 +196,89 @@ export default {
     const isEditingDraft = computed(() => !!props.draft);
     const isReply = computed(() => !!props.replyTo);
     
-    // Функция для поиска ID пользователя по email
-    const findRecipientId = async () => {
-      if (!recipientEmail.value) {
-        recipientFound.value = false;
-        return;
+    // Переменная для хранения таймера debounce
+    let findRecipientTimeout = null;
+    
+    // PGP шифрование
+    const recipientPublicKey = ref('');
+    const recipientPublicKeyLoaded = ref(false);
+    
+    // Функция для поиска ID пользователя по email (с ручной реализацией debounce)
+    const findRecipientId = () => {
+      // Очищаем предыдущий таймер, если он есть
+      if (findRecipientTimeout) {
+        clearTimeout(findRecipientTimeout);
       }
       
-      recipientLoading.value = true;
-      errors.value.to_user_id = null;
-      
-      try {
-        // Используем настоящее API для поиска
-        const response = await usersService.getUserByEmail(recipientEmail.value);
+      // Устанавливаем новый таймер
+      findRecipientTimeout = setTimeout(async () => {
+        if (!recipientEmail.value) {
+          recipientFound.value = false;
+          return;
+        }
         
-        if (response && response.data) {
-          message.value.to_user_id = response.data.id;
-          recipientName.value = `${response.data.first_name || ''} ${response.data.last_name || ''}`.trim() || response.data.email;
-          recipientFound.value = true;
-        } else {
-          // Генерируем временный ID, если пользователь не найден
+        recipientLoading.value = true;
+        errors.value.to_user_id = null;
+        
+        try {
+          // Используем настоящее API для поиска
+          const response = await usersService.getUserByEmail(recipientEmail.value);
+          
+          if (response && response.data) {
+            message.value.to_user_id = response.data.id;
+            recipientName.value = `${response.data.first_name || ''} ${response.data.last_name || ''}`.trim() || response.data.email;
+            recipientFound.value = true;
+            
+            // После получения ID пользователя загружаем его публичный ключ
+            loadRecipientPublicKey(response.data.id);
+          } else {
+            // Генерируем временный ID, если пользователь не найден
+            message.value.to_user_id = `temp-${Date.now()}`;
+            recipientFound.value = true;
+            
+            // Сбрасываем статус публичного ключа
+            recipientPublicKeyLoaded.value = false;
+            recipientPublicKey.value = '';
+          }
+        } catch (error) {
+          console.error('Ошибка поиска пользователя:', error);
+          // Генерируем временный ID вместо показа ошибки
           message.value.to_user_id = `temp-${Date.now()}`;
           recipientFound.value = true;
+          
+          // Сбрасываем статус публичного ключа
+          recipientPublicKeyLoaded.value = false;
+          recipientPublicKey.value = '';
+        } finally {
+          recipientLoading.value = false;
+        }
+      }, 300); // Задержка в 300 мс
+    };
+    
+    // Загрузка публичного ключа получателя
+    const loadRecipientPublicKey = async (userId) => {
+      try {
+        const response = await fetch(`http://localhost:8000/api/mail/pgp-keys/public_key/?user_id=${userId}`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Token ${localStorage.getItem('token')}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          recipientPublicKey.value = data.public_key;
+          recipientPublicKeyLoaded.value = true;
+        } else {
+          // Публичный ключ не найден
+          recipientPublicKeyLoaded.value = false;
+          recipientPublicKey.value = '';
         }
       } catch (error) {
-        console.error('Ошибка поиска пользователя:', error);
-        // Генерируем временный ID вместо показа ошибки
-        message.value.to_user_id = `temp-${Date.now()}`;
-        recipientFound.value = true;
-      } finally {
-        recipientLoading.value = false;
+        console.error('Ошибка загрузки публичного ключа:', error);
+        recipientPublicKeyLoaded.value = false;
+        recipientPublicKey.value = '';
       }
     };
     
@@ -296,6 +362,8 @@ export default {
               url: attachment.file_url
             });
           });
+          
+          console.log('Подготовлены метаданные вложений:', attachmentMeta);
         }
         
         // Возвращаем метаданные о вложениях
@@ -394,29 +462,12 @@ export default {
       return true;
     };
     
-    // Отправка сообщения
+    // Отправка или сохранение сообщения
     const handleSubmit = async () => {
       if (!validateForm()) return;
       
-      isSubmitting.value = true;
-      
-      try {
-        // Подготовка вложений перед отправкой
-        const attachmentMeta = await prepareAttachments();
-        
-        // Добавляем информацию о вложениях в сообщение
-        const messageToSend = {
-          ...message.value,
-          attachments: attachmentMeta
-        };
-        
-        // Отправляем сообщение
-        emit('send', messageToSend);
-      } catch (error) {
-        console.error('Ошибка при подготовке отправки:', error);
-      } finally {
-        isSubmitting.value = false;
-      }
+      // Отправка сообщения
+      submitForm(false);
     };
     
     // Сохранение черновика
@@ -427,22 +478,98 @@ export default {
         return;
       }
       
+      // Сохраняем как черновик
+      submitForm(true);
+    };
+    
+    // Показ сообщения об успехе
+    const showSuccess = (message) => {
+      emit('success', message);
+    };
+    
+    // Отправка или сохранение сообщения
+    const submitForm = async (isDraft = false) => {
+      errors.value = {}; // Сбрасываем ошибки
       isSubmitting.value = true;
       
       try {
-        // Подготовка вложений перед сохранением
-        const attachmentMeta = await prepareAttachments();
+        // Шифруем контент, если нужно
+        if (message.value.is_encrypted && recipientPublicKeyLoaded.value) {
+          try {
+            // Читаем публичный ключ получателя
+            const publicKey = await openpgp.readKey({
+              armoredKey: recipientPublicKey.value
+            });
+            
+            // Шифруем сообщение
+            const encrypted = await openpgp.encrypt({
+              message: await openpgp.createMessage({
+                text: message.value.content_encrypted
+              }),
+              encryptionKeys: publicKey
+            });
+            
+            // Заменяем исходный текст на зашифрованный
+            message.value.content_encrypted = encrypted;
+          } catch (error) {
+            console.error('Ошибка шифрования:', error);
+            errors.value.content_encrypted = 'Ошибка шифрования: ' + error.message;
+            isSubmitting.value = false;
+            return;
+          }
+        } else if (message.value.is_encrypted && !recipientPublicKeyLoaded.value) {
+          // Нельзя отправить зашифрованное сообщение без публичного ключа
+          errors.value.content_encrypted = 'Невозможно зашифровать сообщение: у получателя нет публичного ключа';
+          isSubmitting.value = false;
+          return;
+        }
         
-        // Добавляем информацию о вложениях в черновик
-        const draftToSave = {
+        // Подготовка данных для отправки
+        const messageData = {
           ...message.value,
-          attachments: attachmentMeta
+          is_draft: isDraft
         };
         
-        // Сохраняем черновик
-        emit('save-draft', draftToSave);
+        // Подготавливаем вложения и добавляем их метаданные в сообщение
+        if (attachmentFiles.value.length > 0) {
+          const attachments = await prepareAttachments();
+          if (attachments && attachments.length > 0) {
+            messageData.attachments_meta = attachments;
+            console.log('Добавлены метаданные вложений:', messageData.attachments_meta);
+          }
+        }
+        
+        let response;
+        
+        if (isEditingDraft.value && props.draft && props.draft.id) {
+          // Обновляем существующее сообщение
+          response = await mailService.updateMessage(props.draft.id, messageData);
+        } else {
+          // Создаем новое сообщение
+          response = await mailService.sendMessage(messageData);
+        }
+        
+        console.log('Ответ сервера:', response);
+        
+        if (response && response.data) {
+          const action = isDraft ? 'сохранено как черновик' : 'отправлено';
+          showSuccess(`Сообщение успешно ${action}`);
+          closeModal();
+        }
       } catch (error) {
-        console.error('Ошибка при сохранении черновика:', error);
+        console.error('Ошибка при отправке сообщения:', error);
+        
+        if (error.response && error.response.data) {
+          // Обрабатываем ошибки валидации с сервера
+          const serverErrors = error.response.data;
+          Object.keys(serverErrors).forEach(key => {
+            errors.value[key] = Array.isArray(serverErrors[key]) 
+              ? serverErrors[key].join(' ') 
+              : serverErrors[key];
+          });
+        } else {
+          errors.value.general = 'Произошла ошибка при отправке сообщения';
+        }
       } finally {
         isSubmitting.value = false;
       }
@@ -478,7 +605,8 @@ export default {
       handleFileUpload,
       removeAttachment,
       getFileIcon,
-      formatFileSize
+      formatFileSize,
+      recipientPublicKeyLoaded
     };
   }
 }
@@ -542,21 +670,56 @@ export default {
 }
 
 .encryption-option {
+  border: 1px solid #e0e0e0;
+  padding: 1rem;
+  border-radius: 4px;
+  background-color: #f5f5f5;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
-.form-checkbox {
-  width: 20px;
-  height: 20px;
-}
-
-.encryption-option .form-label {
-  margin: 0;
+.encryption-option label {
   display: flex;
   align-items: center;
-  gap: 8px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+.encryption-option label i {
+  margin-right: 0.5rem;
+}
+
+.encryption-info {
+  margin-top: 0.5rem;
+  padding-left: 1.5rem;
+}
+
+.encryption-status {
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  display: flex;
+  align-items: center;
+}
+
+.encryption-status i {
+  margin-right: 0.5rem;
+}
+
+.encryption-status.success {
+  background-color: #e8f5e9;
+  color: #2e7d32;
+}
+
+.encryption-status.warning {
+  background-color: #fff8e1;
+  color: #f57f17;
+}
+
+.encryption-status.notice {
+  background-color: #e3f2fd;
+  color: #1565c0;
 }
 
 .modal-actions {
